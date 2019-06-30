@@ -93,11 +93,11 @@ usbRequest_t    *rq = (void *)data;
 #define LED_BIT  0x20
 
 // for USB_DATA_WRITE
-static uchar statusBuf[512] = "Hello, USB!";
+static uchar statusBuf[16] = "Hello, USB!";
+static uchar dataBuf[512];
 
-static usbMsgLen_t dataReceived = 0;
 static usbMsgLen_t dataLength = 0;
-static usbMsgLen_t dataSent;
+static usbMsgLen_t dataTransferred = 0;
 
 USB_PUBLIC usbMsgLen_t usbFunctionSetup( uchar data[8] )
 {
@@ -116,15 +116,13 @@ USB_PUBLIC usbMsgLen_t usbFunctionSetup( uchar data[8] )
             statusBuf[3] = rq->wIndex.bytes[1];
             return 0;
         case USB_DATA_WRITE:// receive data from PC
-            dataLength = rq->wLength.word;
-            dataReceived = 0;
-            if (dataLength > sizeof( statusBuf )) {// limit to buffer size
-                dataLength = sizeof( statusBuf );
-            }
-            return USB_NO_MSG;//usbFunctionWrite will be called now
         case USB_DATA_READ:// send data to PC
-            dataSent = 0;
-            return USB_NO_MSG;//usbFunctionRead will be called now    
+            dataTransferred = 0;
+            dataLength = rq->wLength.word;
+            if (dataLength > sizeof( dataBuf )) {// limit to buffer size
+                dataLength = sizeof( dataBuf );
+            }
+            return USB_NO_MSG;//usbFunctionWrite/Read will be called now
     }
     return 0;// should not get here
 }
@@ -132,23 +130,19 @@ USB_PUBLIC usbMsgLen_t usbFunctionSetup( uchar data[8] )
 USB_PUBLIC uchar usbFunctionWrite( uchar* data, uchar len )
 {
     uchar i;
-    for (i = 0; dataReceived < dataLength && i < len; ++i, ++dataReceived) {
-        statusBuf[dataReceived] = data[i];
+    for (i = 0; dataTransferred < dataLength && i < len; ++i, ++dataTransferred) {
+        dataBuf[dataTransferred] = data[i];
     }
-    return (dataReceived == dataLength) ? 1 : 0;// 1 if we received it all, 0 if not
+    return (dataTransferred == dataLength) ? 1 : 0;// 1 if we received it all, 0 if not
 }
 
 USB_PUBLIC uchar usbFunctionRead( uchar* data, uchar len )
 {
     uchar i;
-    for (i = 0; dataSent < 1024 && i < len; ++i, ++dataSent) {
-        data[i] = '0' +  i;
+    for (i = 0; dataTransferred < dataLength && i < len; ++i, ++dataTransferred) {
+        data[i] = dataBuf[dataTransferred];
     }
-    // terminate the string if it's the last byte sent    
-    if (i && dataSent == 1024) {
-        data[i-1] = '\0';
-    }
-    return i;// equals the amount of bytes written
+    return i;// the amount of bytes written
 }
 
 int __attribute__((noreturn)) main( void )
