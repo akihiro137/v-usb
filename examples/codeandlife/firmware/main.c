@@ -95,6 +95,7 @@ usbRequest_t    *rq = (void *)data;
 // for USB_DATA_WRITE
 static uchar statusBuf[16] = "Hello, USB!";
 static uchar dataBuf[512];
+static uchar ledBuf[1];
 
 static usbMsgLen_t dataLength = 0;
 static usbMsgLen_t dataTransferred = 0;
@@ -106,6 +107,10 @@ USB_PUBLIC usbMsgLen_t usbFunctionSetup( uchar data[8] )
         case USB_SET_LED:
             PORTC = (PORTC & ~LED_MASK) | (rq->wValue.bytes[0] & LED_MASK);
             return 0;
+        case USB_GET_LED:
+            ledBuf[0] = PORTC & LED_MASK;
+            usbMsgPtr = ledBuf; // tell the driver which data to return
+            return 1;           // tell the driver to send 1 byte
         case USB_STATUS_READ:// send data to PC
             usbMsgPtr = statusBuf;
             return sizeof( statusBuf );
