@@ -94,19 +94,18 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 #define SCROLL_LOCK 4
 
 usbMsgLen_t usbFunctionWrite(uint8_t * data, uchar len) {
-	if (data[0] == LED_state)
-        return 1;
-    else
+	//if (data[0] == LED_state) {
+    //    return 1;
+    //} else {
         LED_state = data[0];
+    //}
 	
     // LED state changed
-	if(LED_state & CAPS_LOCK)
-		//PORTB |= 1 << PB0; // LED on
-        PORTC |= LED_state & 0x07;
-	else
-		//PORTB &= ~(1 << PB0); // LED off
-        PORTC &= ~(LED_state);
-	
+	//if (LED_state & CAPS_LOCK)
+	//	PORTB |= 1 << PB0; // LED on
+	//else
+	//	PORTB &= ~(1 << PB0); // LED off
+    PORTC = (PORTC & ~0x07) | (LED_state & 0x07);
 	return 1; // Data read, not expecting more
 }
 
@@ -128,7 +127,7 @@ int main() {
 	uchar i, button_release_counter = 0, state = STATE_WAIT;
 
 	//DDRB = 1 << PB0; // PB0 as output
-    DDRC = 0x07;
+    DDRC = 0x3f;
 	PORTB = 1 << PB1; // PB1 is input with internal pullup resistor activated
 	
     for(i=0; i<sizeof(keyboard_report); i++) // clear report initially
@@ -146,7 +145,7 @@ int main() {
     usbDeviceConnect();
 	
     TCCR0B |= (1 << CS01); // timer 0 at clk/8 will generate randomness
-    
+    PORTC |= 0x20;    
     sei(); // Enable interrupts after re-enumeration
 	
     while(1) {
