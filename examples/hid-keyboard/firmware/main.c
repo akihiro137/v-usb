@@ -6,7 +6,9 @@
  * License: GNU GPL v3 (see License.txt)
  */
 #include <avr/io.h>
+#ifndef USB_CFG_USE_INTERRUPT_FREE_IMPL
 #include <avr/interrupt.h>
+#endif
 #include <avr/wdt.h>
 #include <avr/eeprom.h>
 #include <util/delay.h>
@@ -19,7 +21,7 @@
 
 // From Frank Zhao's USB Business Card project
 // http://www.frank-zhao.com/cache/usbbusinesscard_details.php
-const PROGMEM char usbHidReportDescriptor[USB_CFG_HID_REPORT_DESCRIPTOR_LENGTH] = {
+PROGMEM const char usbHidReportDescriptor[USB_CFG_HID_REPORT_DESCRIPTOR_LENGTH] = {
     0x05, 0x01,                    // USAGE_PAGE (Generic Desktop)
     0x09, 0x06,                    // USAGE (Keyboard)
     0xa1, 0x01,                    // COLLECTION (Application)
@@ -135,7 +137,8 @@ int main() {
     
     wdt_enable(WDTO_1S); // enable 1s watchdog timer
 
-    usbInit();
+    //usbInit();
+    cli();
 	
     usbDeviceDisconnect(); // enforce re-enumeration
     for(i = 0; i<250; i++) { // wait 500 ms
@@ -143,44 +146,68 @@ int main() {
         _delay_ms(2);
     }
     usbDeviceConnect();
+
+    // initialize INT settings after reconnect
+    usbInit();
 	
     TCCR0B |= (1 << CS01); // timer 0 at clk/8 will generate randomness
-    PORTC |= 0x20;    
+
+#ifndef USB_CFG_USE_INTERRUPT_FREE_IMPL
     sei(); // Enable interrupts after re-enumeration
-	
+#endif
+
+    PORTC |= 0x20;
+	char led = 0;
+#ifdef USB_CFG_USE_INTERRUPT_FREE_IMPL
+    char cnt = 0;
+#else
+    short cnt = 0;
+#endif
     while(1) {
         wdt_reset(); // keep the watchdog happy
         usbPoll();
         
 		if(!(PINB & (1<<PB1))) { // button pressed (PB1 at ground voltage)
 			// also check if some time has elapsed since last button press
-			if(state == STATE_WAIT && button_release_counter == 255)
+			if(state == STATE_WAIT && button_release_counter == 8)
 				state = STATE_SEND_KEY;
 				
 			button_release_counter = 0; // now button needs to be released a while until retrigger
 		}
-		
-		if(button_release_counter < 255) 
+    	if(button_release_counter < 8) 
 			button_release_counter++; // increase release counter
-		
-        // characters are sent when messageState == STATE_SEND and after receiving
-        // the initial LED state from PC (good way to wait until device is recognized)
-        if(usbInterruptIsReady() && state != STATE_WAIT && LED_state != 0xff){
-			switch(state) {
-			case STATE_SEND_KEY:
-				buildReport('x');
-				state = STATE_RELEASE_KEY; // release next
-				break;
-			case STATE_RELEASE_KEY:
-				buildReport(0);
-				state = STATE_WAIT; // go back to waiting
-				break;
-			default:
-				state = STATE_WAIT; // should not happen
-			}
-			
-			// start sending
-            usbSetInterrupt((void *)&keyboard_report, sizeof(keyboard_report));
+
+        cnt++;
+        if (cnt == 0) {
+            if (led == 0) {
+                led = 1;
+                PORTC |= 0x10;
+            } else {
+                led = 0;
+                PORTC &= ~0x10;
+            }
+        }
+
+        if(usbInterruptIsReady()) {
+            // characters are sent when messageState == STATE_SEND and after receiving
+            // the initial LED state from PC (good way to wait until device is recognized)
+            if (state != STATE_WAIT && LED_state != 0xff){
+                switch(state) {
+                case STATE_SEND_KEY:
+                    buildReport('x');
+                    state = STATE_RELEASE_KEY; // release next
+                    break;
+                case STATE_RELEASE_KEY:
+                    buildReport(0);
+                    state = STATE_WAIT; // go back to waiting
+                    break;
+                default:
+                    state = STATE_WAIT; // should not happen
+                }
+                
+                // start sending
+                usbSetInterrupt((void *)&keyboard_report, sizeof(keyboard_report));
+            }
         }
     }
 	

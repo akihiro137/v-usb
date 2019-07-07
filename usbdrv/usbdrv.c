@@ -272,7 +272,7 @@ USB_PUBLIC void usbSetInterrupt3(uchar *data, uchar len)
 #   define SWITCH_START(cmd)       {uchar _cmd = cmd; if(0){
 #   define SWITCH_CASE(value)      }else if(_cmd == (value)){
 #   define SWITCH_CASE2(v1,v2)     }else if(_cmd == (v1) || _cmd == (v2)){
-#   define SWITCH_CASE3(v1,v2,v3)  }else if(_cmd == (v1) || _cmd == (v2) || (_cmd == v3)){
+#   define SWITCH_CASE3(v1,v2,v3)  }else if(_cmd == (v1) || _cmd == (v2) || _cmd == (v3)){
 #   define SWITCH_DEFAULT          }else{
 #   define SWITCH_END              }}
 #endif
@@ -574,7 +574,52 @@ uchar           isReset = !notResetState;
 USB_PUBLIC void usbPoll(void)
 {
 schar   len;
+#ifndef USB_CFG_USE_INTERRUPT_FREE_IMPL
 uchar   i;
+#endif
+
+#ifdef USB_CFG_USE_INTERRUPT_FREE_IMPL
+    // Test whether another interrupt occurred during the processing of USBpoll and commands.
+    // If yes, we missed a data packet on the bus. Wait until the bus was idle for 8.8µs to 
+    // allow synchronising to the next incoming packet. 
+    
+    if (USB_INTR_PENDING & (1<<USB_INTR_PENDING_BIT))  // Usbpoll() collided with data packet
+    {        
+        uint8_t ctr;
+        
+        // loop takes 5 cycles
+        asm volatile(      
+        "         ldi  %0,%1 \n\t"        
+        "loop%=:  sbis %2,%3  \n\t"        
+        "         ldi  %0,%1  \n\t"
+        "         subi %0,1   \n\t"        
+        "         brne loop%= \n\t"   
+        : "=&d" (ctr)
+        :  "M" ((uint8_t)(8.8f*(F_CPU/1.0e6f)/5.0f+0.5f)), "I" (_SFR_IO_ADDR(USBIN)), "M" (USB_CFG_DMINUS_BIT)
+        );       
+        USB_INTR_PENDING = 1<<USB_INTR_PENDING_BIT;                   
+    }                        
+#endif
+#ifdef USB_CFG_USE_INTERRUPT_FREE_IMPL
+    {
+        // 15 clockcycles per loop.     
+        // adjust fastctr for 5ms timeout
+        uint16_t fastctr=(uint16_t)(5.0f*(F_CPU/1.0e3f)/15.0f+0.5f);
+        uint8_t  resetctr=100;
+        do {        
+            if ((USBIN & USBMASK) !=0) resetctr=100;
+            if (!--resetctr) { // reset encountered
+                usbNewDeviceAddr = 0;   // bits from the reset handling of usbpoll()
+                usbDeviceAddr = 0;
+            }
+            if (USB_INTR_PENDING & (1<<USB_INTR_PENDING_BIT)) {
+                USB_INTR_VECTOR();  
+                USB_INTR_PENDING = 1<<USB_INTR_PENDING_BIT;  // Clear int pending, in case timeout occured during SYNC                     
+                break;
+            }
+        } while(--fastctr);     
+    }
+#endif
 
     len = usbRxLen - 3;
     if(len >= 0){
@@ -584,7 +629,11 @@ uchar   i;
  * retries must be handled on application level.
  * unsigned crc = usbCrc16(buffer + 1, usbRxLen - 3);
  */
+#ifdef USB_CFG_USE_INTERRUPT_FREE_IMPL
+        usbProcessRx(usbRxBuf + 1, len); // only single buffer due to in-order processing
+#else
         usbProcessRx(usbRxBuf + USB_BUFSIZE + 1 - usbInputBufOffset, len);
+#endif
 #if USB_CFG_HAVE_FLOWCONTROL
         if(usbRxLen > 0)    /* only mark as available if not inactivated */
             usbRxLen = 0;
@@ -597,6 +646,7 @@ uchar   i;
             usbBuildTxBlock();
         }
     }
+#ifndef USB_CFG_USE_INTERRUPT_FREE_IMPL
     for(i = 20; i > 0; i--){
         uchar usbLineStatus = USBIN & USBMASK;
         if(usbLineStatus != 0)  /* SE0 has ended */
@@ -609,6 +659,7 @@ uchar   i;
     DBG1(0xff, 0, 0);
 isNotReset:
     usbHandleResetHook(i);
+#endif
 }
 
 /* ------------------------------------------------------------------------- */
