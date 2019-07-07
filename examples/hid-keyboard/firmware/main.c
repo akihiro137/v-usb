@@ -137,20 +137,15 @@ int main() {
     
     wdt_enable(WDTO_1S); // enable 1s watchdog timer
 
-    //usbInit();
     cli();
-	
     usbDeviceDisconnect(); // enforce re-enumeration
     for(i = 0; i<250; i++) { // wait 500 ms
         wdt_reset(); // keep the watchdog happy
         _delay_ms(2);
     }
     usbDeviceConnect();
-
     // initialize INT settings after reconnect
     usbInit();
-	
-    TCCR0B |= (1 << CS01); // timer 0 at clk/8 will generate randomness
 
 #ifndef USB_CFG_USE_INTERRUPT_FREE_IMPL
     sei(); // Enable interrupts after re-enumeration
