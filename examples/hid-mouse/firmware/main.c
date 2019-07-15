@@ -74,9 +74,12 @@ typedef struct{
 }report_t;
 
 static report_t reportBuffer;
-static int      sinus = 7 << 6, cosinus = 0;
 static uchar    idleRate;   /* repeat rate for keyboards, never used for mice */
 
+// dx/dt = -w * x
+// dx = - dTheta * x
+// dTheta = 1/64
+// N = 2pi / dTheta = 2pi * 64
 
 /* The following function advances sin/cos by a fixed angle
  * and stores the difference to the previous coordinates in the report
@@ -85,12 +88,14 @@ static uchar    idleRate;   /* repeat rate for keyboards, never used for mice */
  */
 static void advanceCircleByFixedAngle(void)
 {
+#define SHIFT 7
+#define DIVIDE_BY_SHIFT(val)  (val + (val > 0 ? (1 << (SHIFT-1)) : -(1 << (SHIFT - 1)))) >> SHIFT    /* rounding divide */
+static int      sinus = 1000, cosinus = 0;
 char    d;
 
-#define DIVIDE_BY_64(val)  (val + (val > 0 ? 32 : -32)) >> 6    /* rounding divide */
-    reportBuffer.dx = d = DIVIDE_BY_64(cosinus);
+    reportBuffer.dx = d = DIVIDE_BY_SHIFT(cosinus);
     sinus += d;
-    reportBuffer.dy = d = DIVIDE_BY_64(sinus);
+    reportBuffer.dy = d = DIVIDE_BY_SHIFT(sinus);
     cosinus -= d;
 }
 
@@ -122,10 +127,23 @@ usbRequest_t    *rq = (void *)data;
 }
 
 /* ------------------------------------------------------------------------- */
+volatile int16_t cnt0 = 0;
+ISR(TIMER0_OVF_vect)
+{
+   cnt0 += 1;
+}
+static int16_t cnt0_us = (int16_t) (1.0e6f * 256 / (F_CPU) + 0.5f);
 
 int __attribute__((noreturn)) main(void)
 {
 uchar   i;
+
+    TCCR0A = 0;
+    TCCR0B = 1;    // prescaler = ck / 1
+    //TCCR0= 2;    // prescaler = ck / 8
+    //TCCR0= 5;    // prescaler = ck / 1024
+    TIMSK0 = 1 << TOIE0; // enables timer0 overflow
+    TCNT0 = 0x0000;  // init timer0
 
     wdt_enable(WDTO_1S);
     /* If you don't use the watchdog, replace the call above with a wdt_disable().
@@ -138,7 +156,6 @@ uchar   i;
      */
     odDebugInit();
     DBG1(0x00, 0, 0);       /* debug output: main starts */
-    usbInit();
     usbDeviceDisconnect();  /* enforce re-enumeration, do this while interrupts are disabled! */
     i = 0;
     while(--i){             /* fake USB disconnect for > 250 ms */
@@ -146,8 +163,14 @@ uchar   i;
         _delay_ms(1);
     }
     usbDeviceConnect();
+    usbInit();
     sei();
     DBG1(0x01, 0, 0);       /* debug output: main loop starts */
+    DDRC = 0x3f;
+    PORTC = 0x3f;
+    //char cnt = 0;
+    int16_t last = cnt0;
+    int32_t elapsed = 8000 / cnt0_us;
     for(;;){                /* main event loop */
         DBG1(0x02, 0, 0);   /* debug output: main loop iterates */
         wdt_reset();
@@ -157,7 +180,14 @@ uchar   i;
             advanceCircleByFixedAngle();
             DBG1(0x03, 0, 0);   /* debug output: interrupt report prepared */
             usbSetInterrupt((void *)&reportBuffer, sizeof(reportBuffer));
-        }
+
+            const int16_t curr = cnt0;
+            elapsed = ((elapsed << 4) - elapsed + (curr - last)) >> 4;
+            last = curr;
+            PORTC = ((elapsed * cnt0_us + 500) / 1000) & 0x3f;
+            //PORTC = TIFR0 & 0x3f;
+            //PORTC = EIMSK;
+          }
     }
 }
 

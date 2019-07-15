@@ -9,6 +9,9 @@
 
 #include "usbdrv.h"
 #include "oddebug.h"
+#ifdef USB_CFG_USE_INTERRUPT_FREE_IMPL
+#  include <avr/interrupt.h>  /* for sei() */
+#endif
 
 /*
 General Description:
@@ -570,6 +573,9 @@ uchar           isReset = !notResetState;
 }
 
 /* ------------------------------------------------------------------------- */
+#ifdef USB_CFG_USE_INTERRUPT_FREE_IMPL
+void usbInterruptHandler();  
+#endif
 
 USB_PUBLIC void usbPoll(void)
 {
@@ -613,7 +619,10 @@ uchar   i;
                 usbDeviceAddr = 0;
             }
             if (USB_INTR_PENDING & (1<<USB_INTR_PENDING_BIT)) {
-                USB_INTR_VECTOR();  
+                cli();
+                //USB_INTR_VECTOR();  
+                usbInterruptHandler();
+                sei();
                 USB_INTR_PENDING = 1<<USB_INTR_PENDING_BIT;  // Clear int pending, in case timeout occured during SYNC                     
                 break;
             }
@@ -672,7 +681,9 @@ USB_PUBLIC void usbInit(void)
 #if USB_INTR_CFG_CLR != 0
     USB_INTR_CFG &= ~(USB_INTR_CFG_CLR);
 #endif
-#ifndef USB_USE_INTERRUPT_FREE_IMPL
+#ifdef USB_CFG_USE_INTERRUPT_FREE_IMPL
+    USB_INTR_ENABLE &= ~(1 << USB_INTR_ENABLE_BIT);
+#else
     USB_INTR_ENABLE |= (1 << USB_INTR_ENABLE_BIT);
 #endif
     usbResetDataToggling();
